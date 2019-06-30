@@ -119,13 +119,12 @@ typedef struct pthread_attr pthread_attr_t;
 struct pthread_once
 {
 	volatile int done;
-	int started;
 	int lock;
 };
 
 typedef struct pthread_once pthread_once_t;
 
-#define PTHREAD_ONCE_INIT       {0, -1, 0}
+#define PTHREAD_ONCE_INIT       {0, 0}
 
 //
 // Mutex

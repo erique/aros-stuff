@@ -59,7 +59,7 @@
 #endif
 
 #   define ForeachNode(l,n) \
-	for (n=(void *)(((struct List *)(l))->lh_Head); \
+	for (n=(void *)(l)->mlh_Head; \
 	    ((struct Node *)(n))->ln_Succ; \
 	    n=(void *)(((struct Node *)(n))->ln_Succ))
 #endif
@@ -176,31 +176,21 @@ static pthread_t GetThreadId(struct Task *task)
 /* No CAS instruction on m68k */
 static int __m68k_sync_val_compare_and_swap(int *v, int o, int n)
 {
-	int ret;
+	volatile int * vv = (volatile int *)v;
 
 	Disable();
-	if ((*v) == (o))
-		(*v) = (n);
-	ret = (*v);
+	if (*vv == o) {
+		*vv = n;
+		Enable();
+		return n;
+	}
 	Enable();
-
-	return ret;
+	return o;
 }
 #undef __sync_val_compare_and_swap
 #define __sync_val_compare_and_swap(v, o, n) __m68k_sync_val_compare_and_swap(v, o, n)
 
-static int __m68k_sync_lock_test_and_set(int *v, int n)
-{
-	Disable();
-	(*v) = (n);
-	Enable();
-
-	return n;
-}
 #undef __sync_lock_test_and_set
-#define __sync_lock_test_and_set(v, n) __m68k_sync_lock_test_and_set(v, n)
-#undef __sync_lock_release
-#define __sync_lock_release(v) __m68k_sync_lock_test_and_set(v, 0)
 #endif
 
 //
@@ -1096,7 +1086,7 @@ int pthread_rwlock_rdlock(pthread_rwlock_t *lock)
 
 int pthread_rwlock_timedrdlock(pthread_rwlock_t *lock, const struct timespec *abstime)
 {
-	struct timeval end, now;
+	struct timeval end;
 	int result;
 
 	D(bug("%s(%p, %p)\n", __FUNCTION__, lock, abstime));
@@ -1123,6 +1113,7 @@ int pthread_rwlock_timedrdlock(pthread_rwlock_t *lock, const struct timespec *ab
 	// busy waiting is not very nice, but ObtainSemaphore doesn't support timeouts
 	while ((result = pthread_rwlock_tryrdlock(lock)) == EBUSY)
 	{
+		struct timeval now;
 		sched_yield();
 		gettimeofday(&now, NULL);
 		if (timercmp(&end, &now, <))
@@ -1156,7 +1147,7 @@ int pthread_rwlock_wrlock(pthread_rwlock_t *lock)
 
 int pthread_rwlock_timedwrlock(pthread_rwlock_t *lock, const struct timespec *abstime)
 {
-	struct timeval end, now;
+	struct timeval end;
 	int result;
 
 	D(bug("%s(%p, %p)\n", __FUNCTION__, lock, abstime));
@@ -1183,6 +1174,7 @@ int pthread_rwlock_timedwrlock(pthread_rwlock_t *lock, const struct timespec *ab
 	// busy waiting is not very nice, but ObtainSemaphore doesn't support timeouts
 	while ((result = pthread_rwlock_trywrlock(lock)) == EBUSY)
 	{
+		struct timeval now;
 		sched_yield();
 		gettimeofday(&now, NULL);
 		if (timercmp(&end, &now, <))
@@ -1248,7 +1240,7 @@ int pthread_spin_lock(pthread_spinlock_t *lock)
 #ifdef __MORPHOS__
 	{
 	unsigned int cnt = 0;
-	while (__sync_lock_test_and_set((int *)lock, 1))
+	while (__sync_val_compare_and_swap((int *)lock, 0, 1) == 0)
 	{
 		asm volatile("" ::: "memory");
 		if ((cnt++ & 255) == 0)
@@ -1256,7 +1248,7 @@ int pthread_spin_lock(pthread_spinlock_t *lock)
 	}
 	}
 #else
-	while (__sync_lock_test_and_set((int *)lock, 1))
+	while (__sync_val_compare_and_swap((int *)lock, 0, 1) == 0)
 		sched_yield(); // TODO: don't yield the CPU every iteration
 						// SBF: if yield is implemented correctly there's nothing else to do.
 #endif
@@ -1271,7 +1263,7 @@ int pthread_spin_trylock(pthread_spinlock_t *lock)
 	if (lock == NULL)
 		return EINVAL;
 
-	if (__sync_lock_test_and_set((int *)lock, 1))
+	if (__sync_val_compare_and_swap((int *)lock, 0, 1) == 0)
 		return EBUSY;
 
 	return 0;
@@ -1828,8 +1820,7 @@ int pthread_once(pthread_once_t *once_control, void (*init_routine)(void))
 	if (once_control == NULL || init_routine == NULL)
 		return EINVAL;
 
-	if (__sync_val_compare_and_swap(&once_control->started, FALSE, TRUE))
-	{
+	if (!once_control->done) {
 		pthread_spin_lock(&once_control->lock);
 		if (!once_control->done)
 		{
@@ -1840,7 +1831,6 @@ int pthread_once(pthread_once_t *once_control, void (*init_routine)(void))
 		}
 		pthread_spin_unlock(&once_control->lock);
 	}
-
 	return 0;
 }
 
