@@ -115,9 +115,11 @@ typedef struct
 	int canceled;
 } ThreadInfo;
 
-static ThreadInfo threads[PTHREAD_THREADS_MAX];
+static ThreadInfo * _threads;
+static unsigned numThreads;
 static struct SignalSemaphore thread_sem;
-static TLSKey tlskeys[PTHREAD_KEYS_MAX];
+static TLSKey * _tlskeys;
+static unsigned numTlskeys;
 static struct SignalSemaphore tls_sem;
 
 //
@@ -150,8 +152,8 @@ static ThreadInfo *GetThreadInfo(pthread_t thread)
 	DB2(bug("%s(%u)\n", __FUNCTION__, thread));
 
 	// TODO: more robust error handling?
-	if (thread < PTHREAD_THREADS_MAX)
-		return &threads[thread];
+	if (thread < numThreads)
+		return &_threads[thread];
 
 	return 0;
 }
@@ -163,9 +165,9 @@ static pthread_t GetThreadId(struct Task *task)
 	DB2(bug("%s(%p)\n", __FUNCTION__, task));
 
 	// 0 is main task, First thread id will be 1 so that it is different than default value of pthread_t
-	for (i = 0; i < PTHREAD_THREADS_MAX; i++)
+	for (i = 0; i < numThreads; i++)
 	{
-		if (threads[i].task == task)
+		if (_threads[i].task == task)
 			break;
 	}
 
@@ -209,9 +211,9 @@ int pthread_key_create(pthread_key_t *key, void (*destructor)(void *))
 
 	ObtainSemaphore(&tls_sem);
 
-	for (i = 0; i < PTHREAD_KEYS_MAX; i++)
+	for (i = 0; i < numTlskeys; i++)
 	{
-		if (tlskeys[i].used == FALSE)
+		if (_tlskeys[i].used == FALSE)
 			break;
 	}
 
@@ -221,7 +223,24 @@ int pthread_key_create(pthread_key_t *key, void (*destructor)(void *))
 		return EAGAIN;
 	}
 
-	tls = &tlskeys[i];
+
+	if (i == numTlskeys) {
+		// resize the thread's storage.
+		unsigned n = numTlskeys + numTlskeys + 2;
+		if (n > PTHREAD_KEYS_MAX)
+			n = PTHREAD_KEYS_MAX;
+
+		TLSKey * t = (TLSKey *)realloc(_tlskeys, n * sizeof(TLSKey));
+		if (!t) {
+			ReleaseSemaphore(&tls_sem);
+			return EAGAIN;
+		}
+
+		_tlskeys = t;
+		numTlskeys = n;
+	}
+	
+	tls = &_tlskeys[i];
 	tls->used = TRUE;
 	tls->destructor = destructor;
 
@@ -238,10 +257,10 @@ int pthread_key_delete(pthread_key_t key)
 
 	D(bug("%s(%u)\n", __FUNCTION__, key));
 
-	if (key >= PTHREAD_KEYS_MAX)
+	if (key >= numTlskeys)
 		return EINVAL;
 
-	tls = &tlskeys[key];
+	tls = &_tlskeys[key];
 
 	ObtainSemaphore(&tls_sem);
 
@@ -267,11 +286,11 @@ int pthread_setspecific(pthread_key_t key, const void *value)
 
 	D(bug("%s(%u)\n", __FUNCTION__, key));
 
-	if (key >= PTHREAD_KEYS_MAX)
+	if (key >= numTlskeys)
 		return EINVAL;
 
 	thread = pthread_self();
-	tls = &tlskeys[key];
+	tls = &_tlskeys[key];
 
 	ObtainSemaphoreShared(&tls_sem);
 
@@ -1538,13 +1557,13 @@ static void StarterFunc(void)
 	for (j = 0; foundkey && j < PTHREAD_DESTRUCTOR_ITERATIONS; j++)
 	{
 		foundkey = FALSE;
-		for (i = 0; i < PTHREAD_KEYS_MAX; i++)
+		for (i = 0; i < numTlskeys; i++)
 		{
-			if (tlskeys[i].used && tlskeys[i].destructor && inf->tlsvalues[i])
+			if (_tlskeys[i].used && _tlskeys[i].destructor && inf->tlsvalues[i])
 			{
 				void *oldvalue = inf->tlsvalues[i];
 				inf->tlsvalues[i] = NULL;
-				tlskeys[i].destructor(oldvalue);
+				_tlskeys[i].destructor(oldvalue);
 				foundkey = TRUE;
 			}
 		}
@@ -1577,6 +1596,22 @@ int pthread_create(pthread_t *thread, const pthread_attr_t *attr, void *(*start)
 	{
 		ReleaseSemaphore(&thread_sem);
 		return EAGAIN;
+	}
+
+	if (threadnew == numThreads) {
+		// resize the thread's storage.
+		unsigned n = numThreads + numThreads + 2;
+		if (n > PTHREAD_THREADS_MAX)
+			n = PTHREAD_THREADS_MAX;
+
+		ThreadInfo * t = (ThreadInfo *)realloc(_threads, n * sizeof(ThreadInfo));
+		if (!t) {
+			ReleaseSemaphore(&thread_sem);
+			return EAGAIN;
+		}
+
+		_threads = t;
+		numThreads = n;
 	}
 
 	// prepare the ThreadInfo structure
@@ -1995,7 +2030,7 @@ int __pthread_Init_Func(void)
 	InitSemaphore(&tls_sem);
 
 	// reserve ID 0 for the main thread
-	ThreadInfo *inf = &threads[0];
+	ThreadInfo *inf = &_threads[0];
 #ifdef __AMIGA__
     inf->task = SysBase->ThisTask;
 #else
