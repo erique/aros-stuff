@@ -115,8 +115,8 @@ typedef struct
 	int canceled;
 } ThreadInfo;
 
-static ThreadInfo * _threads;
-static unsigned numThreads;
+static ThreadInfo * _threads = 0;
+static unsigned numThreads = 0;
 static struct SignalSemaphore thread_sem;
 static TLSKey * _tlskeys;
 static unsigned numTlskeys;
@@ -172,6 +172,23 @@ static pthread_t GetThreadId(struct Task *task)
 	}
 
 	return i;
+}
+
+static ThreadInfo *IncreaseThreadPool(unsigned additional)
+{
+	unsigned n = numThreads + additional;
+	if (n == numThreads)
+		return _threads;
+	if (n > PTHREAD_THREADS_MAX)
+		n = PTHREAD_THREADS_MAX;
+
+	ThreadInfo * t = (ThreadInfo *)realloc(_threads, n * sizeof(ThreadInfo));
+	if (t) {
+		_threads = t;
+		numThreads = n;
+	}
+
+	return t;
 }
 
 #if defined __mc68000__
@@ -1600,18 +1617,10 @@ int pthread_create(pthread_t *thread, const pthread_attr_t *attr, void *(*start)
 
 	if (threadnew == numThreads) {
 		// resize the thread's storage.
-		unsigned n = numThreads + numThreads + 2;
-		if (n > PTHREAD_THREADS_MAX)
-			n = PTHREAD_THREADS_MAX;
-
-		ThreadInfo * t = (ThreadInfo *)realloc(_threads, n * sizeof(ThreadInfo));
-		if (!t) {
+		if (!IncreaseThreadPool(numThreads + 2)) {
 			ReleaseSemaphore(&thread_sem);
 			return EAGAIN;
 		}
-
-		_threads = t;
-		numThreads = n;
 	}
 
 	// prepare the ThreadInfo structure
@@ -2028,6 +2037,13 @@ int __pthread_Init_Func(void)
 	//memset(&threads, 0, sizeof(threads));
 	InitSemaphore(&thread_sem);
 	InitSemaphore(&tls_sem);
+
+	// make sure we have at least one slot
+	if (!numThreads) {
+		if (!IncreaseThreadPool(1)) {
+			return FALSE;
+		}
+	}
 
 	// reserve ID 0 for the main thread
 	ThreadInfo *inf = &_threads[0];
