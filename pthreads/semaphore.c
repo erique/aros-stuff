@@ -54,7 +54,7 @@ sem_t *sem_open(const char *name, int oflag, mode_t mode, unsigned int value)
 {
 	sem_t *sem;
 
-	D(bug("%s(%s, %d, %u, %u)\n", __FUNCTION__, name, oflag, mode, value));
+	D(bug("%s(%s, %ld, %lu, %lu)\n", __FUNCTION__, name, oflag, mode, value));
 
 	pthread_once(&once_control, _Init_Semaphore);
 
@@ -109,7 +109,7 @@ sem_t *sem_open(const char *name, int oflag, mode_t mode, unsigned int value)
 
 int sem_close(sem_t *sem)
 {
-	D(bug("%s(%p)\n", __FUNCTION__, sem));
+	D(bug("%s(0x%08lx)\n", __FUNCTION__, sem));
 
 	return 0;
 }
@@ -153,7 +153,7 @@ int sem_unlink(const char *name)
 
 int sem_init(sem_t *sem, int pshared, unsigned int value)
 {
-	D(bug("%s(%p, %d, %u)\n", __FUNCTION__, sem, pshared, value));
+	D(bug("%s(0x%08lx, %ld, %lu)\n", __FUNCTION__, sem, pshared, value));
 
 	if (sem == NULL || value > (unsigned int)SEM_VALUE_MAX)
 	{
@@ -171,7 +171,7 @@ int sem_init(sem_t *sem, int pshared, unsigned int value)
 
 int sem_destroy(sem_t *sem)
 {
-	D(bug("%s(%p)\n", __FUNCTION__, sem));
+	D(bug("%s(0x%08lx)\n", __FUNCTION__, sem));
 
 	if (sem == NULL)
 	{
@@ -197,7 +197,7 @@ int sem_trywait(sem_t *sem)
 {
 	int result = 0;
 
-	D(bug("%s(%p)\n", __FUNCTION__, sem));
+	D(bug("%s(0x%08lx)\n", __FUNCTION__, sem));
 
 	if (sem == NULL)
 	{
@@ -227,7 +227,7 @@ int sem_timedwait(sem_t *sem, const struct timespec *abstime)
 {
 	int result = 0;
 
-	D(bug("%s(%p, %p)\n", __FUNCTION__, sem, abstime));
+	D(bug("%s(0x%08lx, 0x%08lx)\n", __FUNCTION__, sem, abstime));
 
 	if (sem == NULL)
 	{
@@ -260,14 +260,14 @@ int sem_timedwait(sem_t *sem, const struct timespec *abstime)
 
 int sem_wait(sem_t *sem)
 {
-	D(bug("%s(%p)\n", __FUNCTION__, sem));
+	D(bug("%s(0x%08lx)\n", __FUNCTION__, sem));
 
 	return sem_timedwait(sem, NULL);
 }
 
 int sem_post(sem_t *sem)
 {
-	D(bug("%s(%p)\n", __FUNCTION__, sem));
+	D(bug("%s(0x%08lx)\n", __FUNCTION__, sem));
 
 	if (sem == NULL)
 	{
@@ -296,7 +296,7 @@ int sem_post(sem_t *sem)
 
 int sem_getvalue(sem_t *sem, int *sval)
 {
-	D(bug("%s(%p)\n", __FUNCTION__, sem));
+	D(bug("%s(0x%08lx)\n", __FUNCTION__, sem));
 
 	if (sem == NULL || sval == NULL)
 	{
