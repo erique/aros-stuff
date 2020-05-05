@@ -20,7 +20,8 @@ CFLAGS += -march=i586
 else
 M68K = $(shell which m68k-amigaos-gcc 2>/dev/null)
 ifneq ($(M68K),)
-CFLAGS = -Os -fomit-frame-pointer -noixemul -isystem .
+CFLAGS = -Os -fomit-frame-pointer -noixemul -isystem . -g
+#CFLAGS = -O0 -noixemul -isystem . -g -DDEBUG
 CC = m68k-amigaos-gcc
 AR = m68k-amigaos-ar 
 endif
@@ -37,6 +38,8 @@ all: libpthread.a
 
 libpthread.a: $(OBJ)
 	$(AR) rcs $@ $?
+
+$(OBJ): Makefile
 
 clean:
 	rm -f $(OBJ)
