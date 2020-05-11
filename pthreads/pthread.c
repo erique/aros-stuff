@@ -1485,6 +1485,10 @@ static void StarterFunc(void)
 	// trim the name
 	//inf->task->tc_Node.ln_Name[inf->oldlen];
 
+	// dummy lock/unlock to make sure the task ptr is written
+	ObtainSemaphore(&thread_sem);
+	ReleaseSemaphore(&thread_sem);
+
 	// we have to set the priority here to avoid race conditions
 	SetTaskPri(inf->task, inf->attr.param.sched_priority);
 
