@@ -83,6 +83,7 @@ typedef struct
 	struct MinNode node;
 	struct Task *task;
 	ULONG sigmask;
+	ULONG signaled;
 } CondWaiter;
 
 typedef struct
@@ -767,6 +768,7 @@ static int _pthread_cond_timedwait(pthread_cond_t *cond, pthread_mutex_t *mutex,
 	}
 	waiter.sigmask = 1 << signal;
 	sigs |= waiter.sigmask;
+	waiter.signaled = 0;
 
 	// add it to the end of the list
 	ObtainSemaphore(&cond->semaphore);
@@ -849,6 +851,9 @@ static int _pthread_cond_broadcast(pthread_cond_t *cond, BOOL onlyfirst)
 	ObtainSemaphore(&cond->semaphore);
 	ForeachNode(&cond->waiters, waiter)
 	{
+		if (waiter->signaled)
+			continue;
+		waiter->signaled = 1;
 		Signal(waiter->task, waiter->sigmask);
 		if (onlyfirst) break;
 	}
