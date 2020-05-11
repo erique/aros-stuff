@@ -115,11 +115,9 @@ typedef struct
 	int canceled;
 } ThreadInfo;
 
-static ThreadInfo * _threads = 0;
-static unsigned numThreads = 0;
+static ThreadInfo threads[PTHREAD_THREADS_MAX];
 static struct SignalSemaphore thread_sem;
-static TLSKey * _tlskeys;
-static unsigned numTlskeys;
+static TLSKey tlskeys[PTHREAD_KEYS_MAX];
 static struct SignalSemaphore tls_sem;
 
 //
@@ -152,8 +150,8 @@ static ThreadInfo *GetThreadInfo(pthread_t thread)
 	DB2(bug("%s(%lu)\n", __FUNCTION__, thread));
 
 	// TODO: more robust error handling?
-	if (thread < numThreads)
-		return &_threads[thread];
+	if (thread < PTHREAD_THREADS_MAX)
+		return &threads[thread];
 
 	return 0;
 }
@@ -165,30 +163,13 @@ static pthread_t GetThreadId(struct Task *task)
 	DB2(bug("%s(0x%08lx)\n", __FUNCTION__, task));
 
 	// 0 is main task, First thread id will be 1 so that it is different than default value of pthread_t
-	for (i = 0; i < numThreads; i++)
+	for (i = 0; i < PTHREAD_THREADS_MAX; i++)
 	{
-		if (_threads[i].task == task)
+		if (threads[i].task == task)
 			break;
 	}
 
 	return i;
-}
-
-static ThreadInfo *IncreaseThreadPool(unsigned additional)
-{
-	unsigned n = numThreads + additional;
-	if (n == numThreads)
-		return _threads;
-	if (n > PTHREAD_THREADS_MAX)
-		n = PTHREAD_THREADS_MAX;
-
-	ThreadInfo * t = (ThreadInfo *)realloc(_threads, n * sizeof(ThreadInfo));
-	if (t) {
-		_threads = t;
-		numThreads = n;
-	}
-
-	return t;
 }
 
 #if defined __mc68000__
@@ -228,9 +209,9 @@ int pthread_key_create(pthread_key_t *key, void (*destructor)(void *))
 
 	ObtainSemaphore(&tls_sem);
 
-	for (i = 0; i < numTlskeys; i++)
+	for (i = 0; i < PTHREAD_KEYS_MAX; i++)
 	{
-		if (_tlskeys[i].used == FALSE)
+		if (tlskeys[i].used == FALSE)
 			break;
 	}
 
@@ -240,24 +221,7 @@ int pthread_key_create(pthread_key_t *key, void (*destructor)(void *))
 		return EAGAIN;
 	}
 
-
-	if (i == numTlskeys) {
-		// resize the thread's storage.
-		unsigned n = numTlskeys + numTlskeys + 2;
-		if (n > PTHREAD_KEYS_MAX)
-			n = PTHREAD_KEYS_MAX;
-
-		TLSKey * t = (TLSKey *)realloc(_tlskeys, n * sizeof(TLSKey));
-		if (!t) {
-			ReleaseSemaphore(&tls_sem);
-			return EAGAIN;
-		}
-
-		_tlskeys = t;
-		numTlskeys = n;
-	}
-	
-	tls = &_tlskeys[i];
+	tls = &tlskeys[i];
 	tls->used = TRUE;
 	tls->destructor = destructor;
 
@@ -274,10 +238,10 @@ int pthread_key_delete(pthread_key_t key)
 
 	D(bug("%s(%lu)\n", __FUNCTION__, key));
 
-	if (key >= numTlskeys)
+	if (key >= PTHREAD_KEYS_MAX)
 		return EINVAL;
 
-	tls = &_tlskeys[key];
+	tls = &tlskeys[key];
 
 	ObtainSemaphore(&tls_sem);
 
@@ -303,11 +267,11 @@ int pthread_setspecific(pthread_key_t key, const void *value)
 
 	D(bug("%s(%lu)\n", __FUNCTION__, key));
 
-	if (key >= numTlskeys)
+	if (key >= PTHREAD_KEYS_MAX)
 		return EINVAL;
 
 	thread = pthread_self();
-	tls = &_tlskeys[key];
+	tls = &tlskeys[key];
 
 	ObtainSemaphoreShared(&tls_sem);
 
@@ -1586,13 +1550,13 @@ static void StarterFunc(void)
 	for (j = 0; foundkey && j < PTHREAD_DESTRUCTOR_ITERATIONS; j++)
 	{
 		foundkey = FALSE;
-		for (i = 0; i < numTlskeys; i++)
+		for (i = 0; i < PTHREAD_KEYS_MAX; i++)
 		{
-			if (_tlskeys[i].used && _tlskeys[i].destructor && inf->tlsvalues[i])
+			if (tlskeys[i].used && tlskeys[i].destructor && inf->tlsvalues[i])
 			{
 				void *oldvalue = inf->tlsvalues[i];
 				inf->tlsvalues[i] = NULL;
-				_tlskeys[i].destructor(oldvalue);
+				tlskeys[i].destructor(oldvalue);
 				foundkey = TRUE;
 			}
 		}
@@ -1627,18 +1591,8 @@ int pthread_create(pthread_t *thread, const pthread_attr_t *attr, void *(*start)
 	threadnew = GetThreadId(NULL);
 	if (threadnew == PTHREAD_THREADS_MAX)
 	{
-		D(bug("%s : numThreads = %li ~~ PTHREAD_THREADS_MAX reached\n", __FUNCTION__, numThreads));
 		ReleaseSemaphore(&thread_sem);
 		return EAGAIN;
-	}
-
-	if (threadnew == numThreads) {
-		// resize the thread's storage.
-		if (!IncreaseThreadPool(numThreads + 2)) {
-			D(bug("%s : numThreads = %li ~~ IncreaseThreadPool failed\n", __FUNCTION__, numThreads));
-			ReleaseSemaphore(&thread_sem);
-			return EAGAIN;
-		}
 	}
 
 	// prepare the ThreadInfo structure
@@ -1758,10 +1712,6 @@ pthread_t pthread_self(void)
 #endif
 
 	thread = GetThreadId(task);
-
-	if (thread == numThreads)
-		return 0;
-
 	return thread;
 }
 
@@ -2061,19 +2011,12 @@ int __pthread_Init_Func(void)
 	if (OpenDevice("timer.device", UNIT_WAITUTC, (APTR) &waitutc, 0) != 0)
 		return FALSE;
 #endif
-	//memset(&threads, 0, sizeof(threads));
+	memset(&threads, 0, sizeof(threads));
 	InitSemaphore(&thread_sem);
 	InitSemaphore(&tls_sem);
 
-	// make sure we have at least one slot
-	if (!numThreads) {
-		if (!IncreaseThreadPool(1)) {
-			return FALSE;
-		}
-	}
-
 	// reserve ID 0 for the main thread
-	ThreadInfo *inf = &_threads[0];
+	ThreadInfo *inf = &threads[0];
 #ifdef __AMIGA__
     inf->task = SysBase->ThisTask;
 #else
@@ -2098,8 +2041,11 @@ void __pthread_Exit_Func(void)
 	// wait for the threads?
 #if defined(__MORPHOS__) || defined(__AMIGA__)
 	// if we don't do this we can easily end up with unloaded code being executed
-	for (i = 1; i < numThreads; i++)
+	for (i = 1; i < PTHREAD_THREADS_MAX; i++) {
+		if (!threads[i].task)
+			continue;
 		pthread_join(i, NULL);
+	}
 #endif
 #ifdef __MORPHOS__
 	CloseDevice((APTR) &waitutc);
