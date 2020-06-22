@@ -206,7 +206,7 @@ static int __m68k_sync_val_compare_and_swap(int *v, int o, int n)
 int pthread_key_create(pthread_key_t *key, void (*destructor)(void *))
 {
 	TLSKey *tls;
-	int i;
+	int i,t;
 
 	D(bug("%s(0x%08lx, 0x%08lx)\n", __FUNCTION__, key, destructor));
 
@@ -234,6 +234,15 @@ int pthread_key_create(pthread_key_t *key, void (*destructor)(void *))
 	ReleaseSemaphore(&tls_sem);
 
 	*key = i;
+
+	// "Upon key creation, the value NULL shall be associated with the new key in all active threads."
+	for (t = 0; t < PTHREAD_THREADS_MAX; t++)
+	{
+		ThreadInfo *inf = GetThreadInfo((pthread_t)t);
+		if (!inf)
+			continue;
+		inf->tlsvalues[i] = (void *)NULL;
+	}
 
 	return 0;
 }
