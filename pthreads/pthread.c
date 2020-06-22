@@ -150,9 +150,13 @@ static ThreadInfo *GetThreadInfo(pthread_t thread)
 {
 	DB2(bug("%s(%lu)\n", __FUNCTION__, thread));
 
+	// The internal "thread ID" value (i.e. array offset) is 0-based,
+	// but the pthread_t is 1-based, to make it compliant with POSIX ( see GetThreadId() )
+	const uint32_t tid = thread-1;
+
 	// TODO: more robust error handling?
-	if (thread < PTHREAD_THREADS_MAX)
-		return &threads[thread];
+	if (tid < PTHREAD_THREADS_MAX)
+		return &threads[tid];
 
 	return 0;
 }
@@ -163,14 +167,15 @@ static pthread_t GetThreadId(struct Task *task)
 
 	DB2(bug("%s(0x%08lx)\n", __FUNCTION__, task));
 
-	// 0 is main task, First thread id will be 1 so that it is different than default value of pthread_t
+	// The 0th entry is the main task/thread.
+	// We adjust the return value to make sure pthread_t is non-null, as per POSIX standard
 	for (i = 0; i < PTHREAD_THREADS_MAX; i++)
 	{
 		if (threads[i].task == task)
 			break;
 	}
 
-	return i;
+	return i+1;
 }
 
 #if defined __mc68000__
